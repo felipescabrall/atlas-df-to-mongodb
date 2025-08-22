@@ -225,7 +225,7 @@ public class FluxoPrincipalService {
             LocalDate hoje = LocalDate.now();
             String dataAtual = hoje.format(DateTimeFormatter.ofPattern("yyyy-MM-dd"));
             
-            Query query = new Query(Criteria.where("data").is(dataAtual).and("status").is("ready"));
+            Query query = new Query(Criteria.where("data").is(dataAtual).and("status").is("pronto"));
             boolean existemDados = controlMongoTemplate.exists(query, collectionLoadData);
             
             if (!existemDados) {
@@ -342,9 +342,6 @@ public class FluxoPrincipalService {
              logger.info("Estatísticas coletadas - Processo ID: {} | Total: {} | Válidos: {} | Inválidos: {}", 
                         processoId, countTotal, countValidos, countInvalidos);
              
-             // Salvar estatísticas no load_data
-             salvarEstatisticasLoadData(processoId, dataAtual, countTotal, countValidos, countInvalidos);
-             
              log.setMensagem(String.format("Estatísticas coletadas com sucesso - Total: %d | Válidos: %d | Inválidos: %d", 
                            countTotal, countValidos, countInvalidos));
              log.finalizarEtapa();
@@ -358,34 +355,7 @@ public class FluxoPrincipalService {
          }
      }
 
-     /**
-      * Salva as estatísticas do processamento no load_data
-      */
-     private void salvarEstatisticasLoadData(String processoId, String dataProcessamento, long totalDocumentos, long documentosValidos, long documentosInvalidos) {
-         try {
-             // Criar documento com estatísticas
-             Document estatisticas = new Document()
-                 .append("processoId", processoId)
-                 .append("dataProcessamento", dataProcessamento)
-                 .append("dataHoraProcessamento", LocalDateTime.now())
-                 .append("totalDocumentos", totalDocumentos)
-                 .append("documentosValidos", documentosValidos)
-                 .append("documentosInvalidos", documentosInvalidos)
-                 .append("percentualValidos", totalDocumentos > 0 ? (double) documentosValidos / totalDocumentos * 100 : 0.0)
-                 .append("percentualInvalidos", totalDocumentos > 0 ? (double) documentosInvalidos / totalDocumentos * 100 : 0.0)
-                 .append("status", "estatisticas_coletadas")
-                 .append("tipoRegistro", "estatisticas_processamento");
-             
-             // Inserir no load_data
-             controlMongoTemplate.getCollection(collectionLoadData).insertOne(estatisticas);
-             
-             logger.info("Estatísticas salvas no load_data - Processo ID: {} | Data: {}", processoId, dataProcessamento);
-             
-         } catch (Exception e) {
-             logger.error("Erro ao salvar estatísticas no load_data - Processo ID: {}", processoId, e);
-             throw new RuntimeException("Erro ao salvar estatísticas no load_data", e);
-         }
-     }
+
 
       /**
       * Cria índices na collection temporária
@@ -456,18 +426,22 @@ public class FluxoPrincipalService {
      
      /**
      * Atualiza o status do documento na collection loadData para 'processado'
-     * e adiciona o array de procedimentos executados
+     * e adiciona o array de procedimentos executados, estatísticas e tempo total
      */
     private void atualizarStatusLoadData(String processoId) {
         try {
             LocalDate hoje = LocalDate.now();
             String dataAtual = hoje.format(DateTimeFormatter.ofPattern("yyyy-MM-dd"));
+            String dataProcessamento = hoje.format(DateTimeFormatter.ofPattern("yyyyMMdd"));
+            String nomeCollectionTemp = "temp_" + dataProcessamento;
             
             // Buscar todos os logs do processo para criar o array de procedimentos
             List<ProcessLog> logs = processLogRepository.findByProcessoIdOrderByDataInicioAsc(processoId);
             
-            // Criar lista de procedimentos executados
+            // Criar lista de procedimentos executados e calcular tempo total
             List<Document> procedimentos = new ArrayList<>();
+            double tempoTotalExecucao = 0.0;
+            
             for (ProcessLog log : logs) {
                 if (log.getDataFim() != null && log.getTempoTotalSegundos() != null) {
                     Document procedimento = new Document()
@@ -475,18 +449,41 @@ public class FluxoPrincipalService {
                         .append("tempo_execucao_segundos", log.getTempoTotalSegundos())
                         .append("data_execucao", log.getDataInicio());
                     procedimentos.add(procedimento);
+                    tempoTotalExecucao += log.getTempoTotalSegundos();
                 }
             }
             
-            Query query = new Query(Criteria.where("data").is(dataAtual).and("status").is("ready"));
+            // Coletar estatísticas da collection temporária
+            Query queryValidos = new Query(Criteria.where("validade").is("valido"));
+            long countValidos = flatMongoTemplate.count(queryValidos, nomeCollectionTemp);
+            
+            Query queryInvalidos = new Query(Criteria.where("validade").is("invalido"));
+            long countInvalidos = flatMongoTemplate.count(queryInvalidos, nomeCollectionTemp);
+            
+            long countTotal = flatMongoTemplate.count(new Query(), nomeCollectionTemp);
+            
+            // Calcular percentuais
+            double percentualValidos = countTotal > 0 ? Math.round((double) countValidos / countTotal * 100.0 * 100.0) / 100.0 : 0.0;
+            double percentualInvalidos = countTotal > 0 ? Math.round((double) countInvalidos / countTotal * 100.0 * 100.0) / 100.0 : 0.0;
+            
+            Query query = new Query(Criteria.where("data").is(dataAtual).and("status").is("pronto"));
             Update update = new Update()
                 .set("status", "processado")
                 .set("data_processamento", LocalDateTime.now())
-                .set("procedimentos_executados", procedimentos);
+                .set("procedimentos_executados", procedimentos)
+                .set("processoId", processoId)
+                .set("data_processamento_formato", dataProcessamento)
+                .set("totalDocumentos", countTotal)
+                .set("documentosValidos", countValidos)
+                .set("documentosInvalidos", countInvalidos)
+                .set("percentualValidos", percentualValidos)
+                .set("percentualInvalidos", percentualInvalidos)
+                .set("tempoTotalExecucaoSegundos", Math.round(tempoTotalExecucao * 100.0) / 100.0);
             
             controlMongoTemplate.updateMulti(query, update, collectionLoadData);
             
-            logger.info("Status dos documentos na collection loadData atualizado para 'processado' na data: {} com {} procedimentos", dataAtual, procedimentos.size());
+            logger.info("Status dos documentos na collection loadData atualizado para 'processado' na data: {} com {} procedimentos, {} documentos totais, tempo total: {} segundos", 
+                       dataAtual, procedimentos.size(), countTotal, tempoTotalExecucao);
             
         } catch (Exception e) {
             logger.error("Erro ao atualizar status na collection loadData", e);

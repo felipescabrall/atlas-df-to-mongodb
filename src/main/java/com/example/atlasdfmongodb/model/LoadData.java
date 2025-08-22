@@ -18,13 +18,37 @@ public class LoadData {
     private String data; // formato YYYY-MM-DD
 
     @Field("status")
-    private String status; // ready, processado
+    private String status; // pronto, processado
 
     @Field("data_processamento")
     private LocalDateTime dataProcessamento;
 
     @Field("procedimentos_executados")
     private List<ProcedimentoExecutado> procedimentosExecutados = new ArrayList<>();
+    
+    @Field("processoId")
+    private String processoId;
+    
+    @Field("data_processamento_formato")
+    private String dataProcessamentoFormato; // formato yyyyMMdd
+    
+    @Field("totalDocumentos")
+    private Long totalDocumentos;
+    
+    @Field("documentosValidos")
+    private Long documentosValidos;
+    
+    @Field("documentosInvalidos")
+    private Long documentosInvalidos;
+    
+    @Field("percentualValidos")
+    private Double percentualValidos;
+    
+    @Field("percentualInvalidos")
+    private Double percentualInvalidos;
+    
+    @Field("tempoTotalExecucaoSegundos")
+    private Double tempoTotalExecucaoSegundos;
 
     // Construtores
     public LoadData() {

@@ -27,10 +27,10 @@ public interface LoadDataRepository extends MongoRepository<LoadData, String> {
     List<LoadData> findByStatus(String status);
 
     /**
-     * Busca documentos ready para uma data específica
+     * Busca documentos prontos para uma data específica
      */
-    @Query("{'data': ?0, 'status': 'ready'}")
-    List<LoadData> findReadyByData(String data);
+    @Query("{'data': ?0, 'status': 'pronto'}")
+    List<LoadData> findProntosByData(String data);
 
     /**
      * Busca documentos processados
@@ -44,7 +44,14 @@ public interface LoadDataRepository extends MongoRepository<LoadData, String> {
     long countByStatus(String status);
 
     /**
-     * Verifica se existe documento ready para uma data
+     * Verifica se existe documento pronto para uma data
      */
     boolean existsByDataAndStatus(String data, String status);
+    
+    /**
+     * Verifica se existe documento pronto para uma data específica
+     */
+    default boolean existsProntoByData(String data) {
+        return existsByDataAndStatus(data, "pronto");
+    }
 }

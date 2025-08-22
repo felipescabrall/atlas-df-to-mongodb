@@ -90,23 +90,23 @@ public class FluxoPrincipalService {
             }
             logger.info("Controle de concorrência OK, prosseguindo - Processo ID: {}", processoId);
 
-            // Etapa 1: Validação
-            logger.info("Iniciando Etapa 1: Validação - Processo ID: {}", processoId);
-            if (!executarEtapa1Validacao(processoId)) {
+            // Etapa 1: Verificação de Dados Disponíveis
+            logger.info("Iniciando Etapa 1: Verificação de Dados Disponíveis - Processo ID: {}", processoId);
+            if (!executarEtapa1VerificacaoDados(processoId)) {
                 logger.info("Etapa 1 falhou: Nenhum dado para processar - Processo ID: {}", processoId);
                 finalizarProcessoComStatus(processoId, ProcessControl.StatusProcesso.PRONTO);
                 return;
             }
             logger.info("Etapa 1 concluída com sucesso - Processo ID: {}", processoId);
 
-            // Etapa 2: Movimentação de Dados
-            logger.info("Iniciando Etapa 2: Movimentação de Dados - Processo ID: {}", processoId);
-            executarEtapa2MovimentacaoDados(processoId);
+            // Etapa 2: Processamento e Validação de Dados
+            logger.info("Iniciando Etapa 2: Processamento e Validação de Dados - Processo ID: {}", processoId);
+            executarEtapa2ProcessamentoValidacao(processoId);
             logger.info("Etapa 2 concluída com sucesso - Processo ID: {}", processoId);
 
-            // Etapa 3: Separação de Dados
-            logger.info("Iniciando Etapa 3: Separação de Dados - Processo ID: {}", processoId);
-            executarEtapa3SeparacaoDados(processoId);
+            // Etapa 3: Coleta de Estatísticas e Métricas
+            logger.info("Iniciando Etapa 3: Coleta de Estatísticas e Métricas - Processo ID: {}", processoId);
+            executarEtapa3ColetaEstatisticas(processoId);
             logger.info("Etapa 3 concluída com sucesso - Processo ID: {}", processoId);
 
             // Etapa 4: Limpeza e Finalização
@@ -138,14 +138,21 @@ public class FluxoPrincipalService {
             controle.setDataAtualizacao(LocalDateTime.now());
             processControlRepository.save(controle);
 
-            // Etapa 1: Validação
-            if (!executarEtapa1Validacao(processoId)) {
+            // Etapa 1: Verificação de Dados Disponíveis
+            if (!executarEtapa1VerificacaoDados(processoId)) {
                 return controle;
             }
 
-            // Este método foi substituído pelo novo fluxo de 4 etapas
-            // Manter apenas para compatibilidade
-            logger.info("Método executarFluxoManual foi substituído pelo novo fluxo de 4 etapas");
+            // Etapa 2: Processamento e Validação de Dados
+            executarEtapa2ProcessamentoValidacao(processoId);
+
+            // Etapa 3: Coleta de Estatísticas e Métricas
+            executarEtapa3ColetaEstatisticas(processoId);
+
+            // Etapa 4: Limpeza e Finalização
+            executarEtapa4LimpezaFinalizacao(processoId);
+
+            controle.setStatus(ProcessControl.StatusProcesso.PROCESSADO);
 
         } catch (Exception e) {
             logger.error("Erro durante execução do fluxo principal - Processo ID: {}", processoId, e);
@@ -210,7 +217,7 @@ public class FluxoPrincipalService {
     /**
      * Etapa 1: Validação - Verifica se há dados para processar
      */
-    private boolean executarEtapa1Validacao(String processoId) {
+    private boolean executarEtapa1VerificacaoDados(String processoId) {
         ProcessLog log = new ProcessLog(processoId, "Iniciando validação de dados", "VALIDACAO");
         processLogRepository.save(log);
         
@@ -243,8 +250,8 @@ public class FluxoPrincipalService {
      /**
       * Etapa 2: Movimentação de Dados
       */
-     private void executarEtapa2MovimentacaoDados(String processoId) {
-         // Mover dados do bradesco.flat para bradesco_flat.temp
+     private void executarEtapa2ProcessamentoValidacao(String processoId) {
+         // Processar e validar dados do bradesco.flat para temp_YYYYMMDD
          executarEtapa2Parte1MovimentacaoDados(processoId);
      }
 
@@ -313,65 +320,78 @@ public class FluxoPrincipalService {
          }
      }
 
-
-
-
-
      /**
-      * Etapa 3: Processamento adicional (funcionalidade movida para Etapa 2)
+      * Etapa 3: Coleta de Estatísticas e Métricas
       */
-     private void executarEtapa3SeparacaoDados(String processoId) {
-         ProcessLog log = new ProcessLog(processoId, "Etapa 3: Processamento adicional - funcionalidade de separação movida para Etapa 2", "ETAPA3_PROCESSAMENTO_ADICIONAL");
+     private void executarEtapa3ColetaEstatisticas(String processoId) {
+         ProcessLog log = new ProcessLog(processoId, "Iniciando coleta de estatísticas e métricas", "COLETA_ESTATISTICAS");
          processLogRepository.save(log);
          
          try {
-             // A funcionalidade de separação de dados foi movida para executarEtapa2Parte1MovimentacaoDados
-             // Esta etapa pode ser usada para processamentos adicionais futuros
+             String dataAtual = LocalDate.now().format(DateTimeFormatter.ofPattern("yyyyMMdd"));
+             String nomeCollectionTemp = "temp_" + dataAtual;
              
-             LocalDate hoje = LocalDate.now();
-             String dataFormatada = hoje.format(DateTimeFormatter.ofPattern("yyyyMMdd"));
-             String collectionTempComData = "temp_" + dataFormatada;
+             // Contar documentos válidos
+             Query queryValidos = new Query(Criteria.where("validade").is("valido"));
+             long countValidos = flatMongoTemplate.count(queryValidos, nomeCollectionTemp);
              
-             // Verificar se a collection temporária existe e tem dados
-             long totalDocumentos = flatMongoTemplate.count(new Query(), collectionTempComData);
+             // Contar documentos inválidos
+             Query queryInvalidos = new Query(Criteria.where("validade").is("invalido"));
+             long countInvalidos = flatMongoTemplate.count(queryInvalidos, nomeCollectionTemp);
              
-             if (totalDocumentos > 0) {
-                 // Contar registros válidos e inválidos
-                 Query queryValidos = new Query(Criteria.where("validade").is("valido"));
-                 Query queryInvalidos = new Query(Criteria.where("validade").is("invalido"));
-                 
-                 long totalValidos = flatMongoTemplate.count(queryValidos, collectionTempComData);
-                 long totalInvalidos = flatMongoTemplate.count(queryInvalidos, collectionTempComData);
-                 
-                 log.setMensagem(String.format("Estatísticas da collection %s: Total: %d, Válidos: %d, Inválidos: %d", 
-                     collectionTempComData, totalDocumentos, totalValidos, totalInvalidos));
-             } else {
-                 log.setMensagem("Collection temporária " + collectionTempComData + " não encontrada ou vazia");
-             }
+             // Contar total de documentos
+             long countTotal = flatMongoTemplate.count(new Query(), nomeCollectionTemp);
              
+             logger.info("Estatísticas coletadas - Processo ID: {} | Total: {} | Válidos: {} | Inválidos: {}", 
+                        processoId, countTotal, countValidos, countInvalidos);
+             
+             // Salvar estatísticas no load_data
+             salvarEstatisticasLoadData(processoId, dataAtual, countTotal, countValidos, countInvalidos);
+             
+             log.setMensagem(String.format("Estatísticas coletadas com sucesso - Total: %d | Válidos: %d | Inválidos: %d", 
+                           countTotal, countValidos, countInvalidos));
              log.finalizarEtapa();
              processLogRepository.save(log);
              
          } catch (Exception e) {
-             log.finalizarEtapaComErro(e.getMessage());
+             log.finalizarEtapaComErro("Erro ao coletar estatísticas: " + e.getMessage());
              processLogRepository.save(log);
-             throw new RuntimeException("Erro no processamento adicional da Etapa 3", e);
+             logger.error("Erro ao coletar estatísticas - Processo ID: {}", processoId, e);
+             throw new RuntimeException("Erro na coleta de estatísticas", e);
          }
      }
-     
+
      /**
-      * Método auxiliar para extrair substring de forma segura
+      * Salva as estatísticas do processamento no load_data
       */
-     private String extrairSubstring(String texto, int inicio, int tamanho) {
-         if (texto == null || inicio < 0 || inicio >= texto.length()) {
-             return "";
+     private void salvarEstatisticasLoadData(String processoId, String dataProcessamento, long totalDocumentos, long documentosValidos, long documentosInvalidos) {
+         try {
+             // Criar documento com estatísticas
+             Document estatisticas = new Document()
+                 .append("processoId", processoId)
+                 .append("dataProcessamento", dataProcessamento)
+                 .append("dataHoraProcessamento", LocalDateTime.now())
+                 .append("totalDocumentos", totalDocumentos)
+                 .append("documentosValidos", documentosValidos)
+                 .append("documentosInvalidos", documentosInvalidos)
+                 .append("percentualValidos", totalDocumentos > 0 ? (double) documentosValidos / totalDocumentos * 100 : 0.0)
+                 .append("percentualInvalidos", totalDocumentos > 0 ? (double) documentosInvalidos / totalDocumentos * 100 : 0.0)
+                 .append("status", "estatisticas_coletadas")
+                 .append("tipoRegistro", "estatisticas_processamento");
+             
+             // Inserir no load_data
+             controlMongoTemplate.getCollection(collectionLoadData).insertOne(estatisticas);
+             
+             logger.info("Estatísticas salvas no load_data - Processo ID: {} | Data: {}", processoId, dataProcessamento);
+             
+         } catch (Exception e) {
+             logger.error("Erro ao salvar estatísticas no load_data - Processo ID: {}", processoId, e);
+             throw new RuntimeException("Erro ao salvar estatísticas no load_data", e);
          }
-         int fim = Math.min(inicio + tamanho, texto.length());
-         return texto.substring(inicio, fim).trim();
      }
-     
+
      /**
-      * Remove collection se ela existir
+      * Remove uma collection se ela existir
       */
      private void dropCollectionSeExistir(String collectionName, String processoId) {
          ProcessLog log = new ProcessLog(processoId, "Verificando e removendo collection existente: " + collectionName, "DROP_COLLECTION");

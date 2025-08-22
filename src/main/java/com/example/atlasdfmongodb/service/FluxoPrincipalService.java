@@ -260,34 +260,64 @@ public class FluxoPrincipalService {
       * Etapa 2: Movimentação de dados usando $out
       */
      private void executarEtapa2Parte1MovimentacaoDados(String processoId) {
-         ProcessLog log = new ProcessLog(processoId, "Iniciando movimentação de dados para temp", "MOVIMENTACAO_DADOS");
+         LocalDate hoje = LocalDate.now();
+         String dataFormatada = hoje.format(DateTimeFormatter.ofPattern("yyyyMMdd"));
+         String collectionTempComData = "temp_" + dataFormatada;
+         
+         ProcessLog log = new ProcessLog(processoId, "Iniciando processamento e validação de dados com pipeline de agregação", "PROCESSAMENTO_VALIDACAO_DADOS");
          processLogRepository.save(log);
          
          try {
-            // Pipeline de agregação para mover dados do bradesco.flat para bradesco_flat.temp
-            // Usando Document para compatibilidade com MongoDB Data Federation
-            List<Document> pipeline = Arrays.asList(
-                new Document("$out",
-                    new Document("atlas",
-                        new Document("db", "bradesco_flat")
-                                .append("coll", collectionTemp)
-                                .append("projectId", atlasProjectId)
-                                .append("clusterName", atlasClusterName)
-                    )
-                )
-            );
-            
-            // Executar no banco principal (bradesco.flat) usando pipeline de Document
-            primaryMongoTemplate.getCollection(collectionFlat).aggregate(pipeline).toCollection();
+             // Drop da collection temporária se existir
+             dropCollectionSeExistir(collectionTempComData, processoId);
              
-             log.setMensagem("Dados movidos com sucesso para coleção temp");
+             // Pipeline de agregação para validação, projeção e saída dos dados
+             List<Document> pipeline = Arrays.asList(
+                 // Etapa 1: Projeção com validação e estruturação dos dados
+                 new Document("$project", new Document()
+                     .append("_id", 0)
+                     .append("validade", new Document("$cond", new Document()
+                         .append("if", new Document("$eq", Arrays.asList(
+                             new Document("$strLenCP", "$DATA"), 122)))
+                         .append("then", "valido")
+                         .append("else", "invalido")))
+                     .append("dados", new Document("$cond", new Document()
+                         .append("if", new Document("$eq", Arrays.asList(
+                             new Document("$strLenCP", "$DATA"), 122)))
+                         .append("then", new Document()
+                             .append("corp", new Document("$substr", Arrays.asList("$DATA", 0, 2)))
+                             .append("cpf", new Document("$substr", Arrays.asList("$DATA", 2, 11)))
+                             .append("num_cartao", new Document("$substr", Arrays.asList("$DATA", 13, 16)))
+                             .append("bandeira", new Document("$substr", Arrays.asList("$DATA", 29, 1)))
+                             .append("desc_produto", new Document("$substr", Arrays.asList("$DATA", 30, 50)))
+                             .append("lim_produto", new Document("$substr", Arrays.asList("$DATA", 80, 1)))
+                             .append("lim_global", new Document("$substr", Arrays.asList("$DATA", 81, 1)))
+                             .append("conta", new Document("$substr", Arrays.asList("$DATA", 82, 16))))
+                         .append("else", new Document("original", "$DATA"))))
+                     .append("hInclReg", "$$NOW")),
+                 
+                 // Etapa 2: Saída para collection temporária com data
+                 new Document("$out", new Document("atlas", new Document()
+                     .append("db", "bradesco_flat")
+                     .append("coll", collectionTempComData)
+                     .append("projectId", atlasProjectId)
+                     .append("clusterName", atlasClusterName)))
+             );
+             
+             // Executar pipeline no banco principal
+             primaryMongoTemplate.getCollection(collectionFlat).aggregate(pipeline).toCollection();
+             
+             // Criar índices na collection temporária
+             criarIndicesCollectionTemp(collectionTempComData, processoId);
+             
+             log.setMensagem("Dados processados, validados e movidos com sucesso para collection: " + collectionTempComData);
              log.finalizarEtapa();
              processLogRepository.save(log);
              
          } catch (Exception e) {
              log.finalizarEtapaComErro(e.getMessage());
              processLogRepository.save(log);
-             throw new RuntimeException("Erro na movimentação de dados", e);
+             throw new RuntimeException("Erro no processamento e validação de dados", e);
          }
      }
 
@@ -296,123 +326,44 @@ public class FluxoPrincipalService {
 
 
      /**
-      * Etapa 3: Separação de Dados
+      * Etapa 3: Processamento adicional (funcionalidade movida para Etapa 2)
       */
      private void executarEtapa3SeparacaoDados(String processoId) {
-         LocalDate hoje = LocalDate.now();
-         String dataFormatada = hoje.format(DateTimeFormatter.ofPattern("yyyyMMdd"));
-         
-         ProcessLog log = new ProcessLog(processoId, "Iniciando separação otimizada de dados válidos e inválidos com bulk insert", "SEPARACAO_OTIMIZADA_BULK");
+         ProcessLog log = new ProcessLog(processoId, "Etapa 3: Processamento adicional - funcionalidade de separação movida para Etapa 2", "ETAPA3_PROCESSAMENTO_ADICIONAL");
          processLogRepository.save(log);
          
          try {
-             String collectionValidos = dataFormatada + "_valido";
-             String collectionInvalidos = dataFormatada + "_invalido";
+             // A funcionalidade de separação de dados foi movida para executarEtapa2Parte1MovimentacaoDados
+             // Esta etapa pode ser usada para processamentos adicionais futuros
              
-             // Drop das collections existentes antes de criar as novas
-             dropCollectionSeExistir(collectionValidos, processoId);
-             dropCollectionSeExistir(collectionInvalidos, processoId);
+             LocalDate hoje = LocalDate.now();
+             String dataFormatada = hoje.format(DateTimeFormatter.ofPattern("yyyyMMdd"));
+             String collectionTempComData = "temp_" + dataFormatada;
              
-             // Listas para armazenar dados processados
-             List<Map<String, Object>> dadosValidos = new ArrayList<>();
-             List<Map<String, Object>> dadosInvalidos = new ArrayList<>();
+             // Verificar se a collection temporária existe e tem dados
+             long totalDocumentos = flatMongoTemplate.count(new Query(), collectionTempComData);
              
-             // Contadores para controle de bulk insert
-             final int BULK_SIZE = bulkInsertSize;
-             final int[] totalProcessados = {0};
-             final int[] totalValidos = {0};
-             final int[] totalInvalidos = {0};
-             
-             log.setMensagem("Iniciando processamento com Spring Data Stream. Bulk insert a cada " + BULK_SIZE + " registros...");
-             processLogRepository.save(log);
-             
-             // Usar Spring Data Stream para leitura eficiente dos dados
-             Query query = new Query(); // Ou adicione suas condições de filtro
-             try (Stream<Map> documentoStream = flatMongoTemplate.stream(query, Map.class, collectionTemp)) {
-                 documentoStream.forEach(documento -> {
-                 String dadoOriginal = (String) documento.get("DATA");
+             if (totalDocumentos > 0) {
+                 // Contar registros válidos e inválidos
+                 Query queryValidos = new Query(Criteria.where("validade").is("valido"));
+                 Query queryInvalidos = new Query(Criteria.where("validade").is("invalido"));
                  
-                 if (dadoOriginal != null) {
-                     // Validação na aplicação (mesmo critério: length == 122)
-                     boolean isValido = dadoOriginal.length() == 122;
-                     
-                     if (isValido) {
-                         // Processamento de substring na aplicação para dados válidos
-                         Map<String, Object> dadoProcessado = new HashMap<>();
-                         dadoProcessado.put("corp", extrairSubstring(dadoOriginal, 0, 2));
-                         dadoProcessado.put("cpf", extrairSubstring(dadoOriginal, 2, 11));
-                         dadoProcessado.put("num_cartao", extrairSubstring(dadoOriginal, 13, 16));
-                         dadoProcessado.put("bandeira", extrairSubstring(dadoOriginal, 29, 1));
-                         dadoProcessado.put("desc_produto", extrairSubstring(dadoOriginal, 30, 50));
-                         dadoProcessado.put("lim_produto", extrairSubstring(dadoOriginal, 80, 1));
-                         dadoProcessado.put("lim_global", extrairSubstring(dadoOriginal, 81, 1));
-                         dadoProcessado.put("conta", extrairSubstring(dadoOriginal, 82, 16));
-                         dadoProcessado.put("hInclReg", new Date());
-                         
-                         dadosValidos.add(dadoProcessado);
-                     } else {
-                         // Dados inválidos mantêm estrutura original
-                         Map<String, Object> dadoInvalido = new HashMap<>(documento);
-                         dadosInvalidos.add(dadoInvalido);
-                     }
-                 }
+                 long totalValidos = flatMongoTemplate.count(queryValidos, collectionTempComData);
+                 long totalInvalidos = flatMongoTemplate.count(queryInvalidos, collectionTempComData);
                  
-                     totalProcessados[0]++;
-                     
-                     // Bulk insert a cada registros processados para evitar estouro de memória
-                     if (totalProcessados[0] % BULK_SIZE == 0) {
-                         // Inserir dados válidos se houver
-                         if (!dadosValidos.isEmpty()) {
-                             flatMongoTemplate.insert(dadosValidos, collectionValidos);
-                             totalValidos[0] += dadosValidos.size();
-                             log.setMensagem("Bulk insert - Inseridos " + dadosValidos.size() + " documentos válidos (Total válidos: " + totalValidos[0] + ")");
-                             processLogRepository.save(log);
-                             dadosValidos.clear(); // Limpar lista para liberar memória
-                         }
-                         
-                         // Inserir dados inválidos se houver
-                         if (!dadosInvalidos.isEmpty()) {
-                             flatMongoTemplate.insert(dadosInvalidos, collectionInvalidos);
-                             totalInvalidos[0] += dadosInvalidos.size();
-                             log.setMensagem("Bulk insert - Inseridos " + dadosInvalidos.size() + " documentos inválidos (Total inválidos: " + totalInvalidos[0] + ")");
-                             processLogRepository.save(log);
-                             dadosInvalidos.clear(); // Limpar lista para liberar memória
-                         }
-                         
-                         log.setMensagem("Processados " + totalProcessados[0] + " documentos com Spring Data Stream");
-                         processLogRepository.save(log);
-                     }
-                 });
+                 log.setMensagem(String.format("Estatísticas da collection %s: Total: %d, Válidos: %d, Inválidos: %d", 
+                     collectionTempComData, totalDocumentos, totalValidos, totalInvalidos));
+             } else {
+                 log.setMensagem("Collection temporária " + collectionTempComData + " não encontrada ou vazia");
              }
              
-             // Inserção final dos dados restantes (menos de 30.000)
-             if (!dadosValidos.isEmpty()) {
-                 flatMongoTemplate.insert(dadosValidos, collectionValidos);
-                 totalValidos[0] += dadosValidos.size();
-                 log.setMensagem("Inserção final - " + dadosValidos.size() + " documentos válidos restantes na collection: " + collectionValidos);
-                 processLogRepository.save(log);
-             }
-             
-             if (!dadosInvalidos.isEmpty()) {
-                 flatMongoTemplate.insert(dadosInvalidos, collectionInvalidos);
-                 totalInvalidos[0] += dadosInvalidos.size();
-                 log.setMensagem("Inserção final - " + dadosInvalidos.size() + " documentos inválidos restantes na collection: " + collectionInvalidos);
-                 processLogRepository.save(log);
-             }
-             
-             // Criar índice único composto na collection de dados válidos se houver dados
-             if (totalValidos[0] > 0) {
-                 criarIndiceUnicoValidados(collectionValidos, processoId);
-             }
-             
-             log.setMensagem("Separação otimizada com bulk insert concluída. Total processados: " + totalProcessados[0] + ", Válidos: " + totalValidos[0] + ", Inválidos: " + totalInvalidos[0]);
              log.finalizarEtapa();
              processLogRepository.save(log);
              
          } catch (Exception e) {
              log.finalizarEtapaComErro(e.getMessage());
              processLogRepository.save(log);
-             throw new RuntimeException("Erro na separação otimizada de dados com bulk insert", e);
+             throw new RuntimeException("Erro no processamento adicional da Etapa 3", e);
          }
      }
      
@@ -449,6 +400,47 @@ public class FluxoPrincipalService {
              processLogRepository.save(log);
              logger.warn("Erro ao remover collection {}: {}", collectionName, e.getMessage());
              // Não lançar exceção para não interromper o fluxo principal
+         }
+     }
+     
+     /**
+      * Cria índices na collection temporária
+      */
+     private void criarIndicesCollectionTemp(String nomeCollection, String processoId) {
+         ProcessLog log = new ProcessLog(processoId, "Criando índices na collection: " + nomeCollection, "CRIAR_INDICES_TEMP");
+         processLogRepository.save(log);
+         
+         try {
+             // Criar índice no campo validade
+             Document validadeIndex = new Document("validade", 1);
+             flatMongoTemplate.getCollection(nomeCollection)
+                     .createIndex(validadeIndex, new IndexOptions().name("idx_validade"));
+             
+             // Criar índice no campo hInclReg
+             Document hInclRegIndex = new Document("hInclReg", 1);
+             flatMongoTemplate.getCollection(nomeCollection)
+                     .createIndex(hInclRegIndex, new IndexOptions().name("idx_hInclReg"));
+             
+             // Criar índice composto nos campos de dados válidos (apenas para registros válidos)
+             Document dadosIndex = new Document()
+                     .append("dados.cpf", 1)
+                     .append("dados.num_cartao", 1);
+             
+             IndexOptions dadosIndexOptions = new IndexOptions()
+                     .name("idx_dados_validos")
+                     .partialFilterExpression(new Document("validade", "valido"));
+             
+             flatMongoTemplate.getCollection(nomeCollection)
+                     .createIndex(dadosIndex, dadosIndexOptions);
+             
+             log.setMensagem("Índices criados com sucesso na collection: " + nomeCollection);
+             log.finalizarEtapa();
+             processLogRepository.save(log);
+             
+         } catch (Exception e) {
+             log.finalizarEtapaComErro(e.getMessage());
+             processLogRepository.save(log);
+             throw new RuntimeException("Erro ao criar índices na collection: " + nomeCollection, e);
          }
      }
 

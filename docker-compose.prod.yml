@@ -1,0 +1,92 @@
+version: '3.8'
+
+services:
+  atlas-df-mongodb-app:
+    build:
+      context: .
+      dockerfile: Dockerfile.prod
+    container_name: atlas-df-mongodb-app-prod
+    ports:
+      - "8081:8080"
+    environment:
+      # Configurações do MongoDB Atlas
+      - MONGODB_MAIN_URI=${MONGODB_MAIN_URI}
+      - MONGODB_MAIN_DATABASE=${MONGODB_MAIN_DATABASE}
+      - MONGODB_FLAT_URI=${MONGODB_FLAT_URI}
+      - MONGODB_FLAT_DATABASE=${MONGODB_FLAT_DATABASE}
+      - MONGODB_CONTROL_URI=${MONGODB_CONTROL_URI}
+      - MONGODB_CONTROL_DATABASE=${MONGODB_CONTROL_DATABASE}
+      
+      # Configurações da aplicação para produção
+      - SPRING_PROFILES_ACTIVE=docker,prod
+      - SERVER_PORT=8080
+      
+      # Configurações JVM otimizadas para produção
+      - JAVA_OPTS=-server -Xmx2g -Xms1g -XX:+UseG1GC -XX:MaxGCPauseMillis=200 -XX:+UseStringDeduplication
+    
+    volumes:
+      # Volume para logs persistentes
+      - logs-data:/app/logs
+    
+    restart: unless-stopped
+    
+    # Configurações de recursos
+    deploy:
+      resources:
+        limits:
+          memory: 2G
+          cpus: '1.0'
+        reservations:
+          memory: 1G
+          cpus: '0.5'
+    
+    # Health check mais rigoroso para produção
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/api/actuator/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 90s
+    
+    # Configurações de logging
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+    
+    networks:
+      - atlas-network
+
+  # Opcional: Nginx como proxy reverso
+  nginx:
+    image: nginx:alpine
+    container_name: atlas-nginx-proxy
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./ssl:/etc/nginx/ssl:ro
+    depends_on:
+      - atlas-df-mongodb-app
+    restart: unless-stopped
+    networks:
+      - atlas-network
+    profiles:
+      - with-proxy
+
+networks:
+  atlas-network:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.20.0.0/16
+
+volumes:
+  logs-data:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: ./logs

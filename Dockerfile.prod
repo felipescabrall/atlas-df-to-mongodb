@@ -1,0 +1,57 @@
+# ===================================================================
+# DOCKERFILE OTIMIZADO PARA PRODUÇÃO
+# Multi-stage build para reduzir tamanho da imagem final
+# ===================================================================
+
+# Stage 1: Build
+FROM openjdk:17-jdk-slim AS builder
+
+WORKDIR /app
+
+# Instalar Maven
+RUN apt-get update && apt-get install -y maven && rm -rf /var/lib/apt/lists/*
+
+# Copiar arquivos de configuração do Maven
+COPY pom.xml .
+
+# Baixar dependências (cache layer)
+RUN mvn dependency:go-offline -B
+
+# Copiar código fonte
+COPY src ./src
+
+# Compilar a aplicação
+RUN mvn clean package -DskipTests
+
+# Stage 2: Runtime
+FROM openjdk:17-jre-slim AS runtime
+
+# Criar usuário não-root para segurança
+RUN groupadd -r appuser && useradd -r -g appuser appuser
+
+# Instalar curl para health checks
+RUN apt-get update && apt-get install -y curl && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+# Criar diretórios necessários
+RUN mkdir -p /app/logs && chown -R appuser:appuser /app
+
+# Copiar JAR da stage de build
+COPY --from=builder /app/target/atlas-df-to-mongodb-0.0.1-SNAPSHOT.jar app.jar
+
+# Ajustar permissões
+RUN chown appuser:appuser app.jar
+
+# Mudar para usuário não-root
+USER appuser
+
+# Expor porta
+EXPOSE 8080
+
+# Health check
+HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
+    CMD curl -f http://localhost:8080/api/actuator/health || exit 1
+
+# Comando para executar a aplicação
+ENTRYPOINT ["java", "-XX:+UseContainerSupport", "-XX:MaxRAMPercentage=75.0", "-jar", "app.jar"]

@@ -1,0 +1,43 @@
+version: '3.8'
+
+services:
+  atlas-df-mongodb-app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: atlas-df-mongodb-app
+    ports:
+      - "8081:8080"
+    environment:
+      # Configurações do MongoDB Atlas
+      - MONGODB_MAIN_URI=${MONGODB_MAIN_URI}
+      - MONGODB_MAIN_DATABASE=${MONGODB_MAIN_DATABASE}
+      - MONGODB_FLAT_URI=${MONGODB_FLAT_URI}
+      - MONGODB_FLAT_DATABASE=${MONGODB_FLAT_DATABASE}
+      - MONGODB_CONTROL_URI=${MONGODB_CONTROL_URI}
+      - MONGODB_CONTROL_DATABASE=${MONGODB_CONTROL_DATABASE}
+      
+      # Configurações da aplicação
+      - SPRING_PROFILES_ACTIVE=docker
+      - SERVER_PORT=8080
+      - JAVA_OPTS=-Xmx2g -Xms1g
+    volumes:
+      # Volume para logs persistentes
+      - ./logs:/app/logs
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/api/actuator/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    networks:
+      - atlas-network
+
+networks:
+  atlas-network:
+    driver: bridge
+
+volumes:
+  logs:
+    driver: local

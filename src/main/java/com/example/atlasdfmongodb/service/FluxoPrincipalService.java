@@ -266,10 +266,7 @@ public class FluxoPrincipalService {
          ProcessLog log = new ProcessLog(processoId, "Iniciando processamento e validação de dados com pipeline de agregação", "PROCESSAMENTO_VALIDACAO_DADOS");
          processLogRepository.save(log);
          
-         try {
-             // Drop da collection temporária se existir
-             dropCollectionSeExistir(collectionTempComData, processoId);
-             
+         try {             
              // Pipeline de agregação para validação, projeção e saída dos dados
              List<Document> pipeline = Arrays.asList(
                  // Etapa 1: Projeção com validação e estruturação dos dados
@@ -390,32 +387,7 @@ public class FluxoPrincipalService {
          }
      }
 
-     /**
-      * Remove uma collection se ela existir
-      */
-     private void dropCollectionSeExistir(String collectionName, String processoId) {
-         ProcessLog log = new ProcessLog(processoId, "Verificando e removendo collection existente: " + collectionName, "DROP_COLLECTION");
-         processLogRepository.save(log);
-         
-         try {
-             if (flatMongoTemplate.collectionExists(collectionName)) {
-                 flatMongoTemplate.dropCollection(collectionName);
-                 log.setMensagem("Collection " + collectionName + " removida com sucesso");
-             } else {
-                 log.setMensagem("Collection " + collectionName + " não existe, nenhuma ação necessária");
-             }
-             log.finalizarEtapa();
-             processLogRepository.save(log);
-             
-         } catch (Exception e) {
-             log.finalizarEtapaComErro("Erro ao remover collection " + collectionName + ": " + e.getMessage());
-             processLogRepository.save(log);
-             logger.warn("Erro ao remover collection {}: {}", collectionName, e.getMessage());
-             // Não lançar exceção para não interromper o fluxo principal
-         }
-     }
-     
-     /**
+      /**
       * Cria índices na collection temporária
       */
      private void criarIndicesCollectionTemp(String nomeCollection, String processoId) {

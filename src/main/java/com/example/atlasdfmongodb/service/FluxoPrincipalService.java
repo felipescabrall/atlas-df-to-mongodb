@@ -416,18 +416,16 @@ public class FluxoPrincipalService {
              flatMongoTemplate.getCollection(nomeCollection)
                      .createIndex(validadeIndex, new IndexOptions().name("idx_validade"));
              
-             // Criar índice no campo hInclReg
-             Document hInclRegIndex = new Document("hInclReg", 1);
-             flatMongoTemplate.getCollection(nomeCollection)
-                     .createIndex(hInclRegIndex, new IndexOptions().name("idx_hInclReg"));
              
-             // Criar índice composto nos campos de dados válidos (apenas para registros válidos)
+             // Criar índice composto único nos campos de dados válidos (apenas para registros válidos)
              Document dadosIndex = new Document()
                      .append("dados.cpf", 1)
-                     .append("dados.num_cartao", 1);
+                     .append("dados.num_cartao", 1)
+                     .append("dados.corp", 1);
              
              IndexOptions dadosIndexOptions = new IndexOptions()
-                     .name("idx_dados_validos")
+                     .name("idx_dados_validos_unique")
+                     .unique(true)
                      .partialFilterExpression(new Document("validade", "valido"));
              
              flatMongoTemplate.getCollection(nomeCollection)

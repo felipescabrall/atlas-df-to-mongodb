@@ -309,6 +309,10 @@ public class FluxoPrincipalService {
              String collectionValidos = dataFormatada + "_valido";
              String collectionInvalidos = dataFormatada + "_invalido";
              
+             // Drop das collections existentes antes de criar as novas
+             dropCollectionSeExistir(collectionValidos, processoId);
+             dropCollectionSeExistir(collectionInvalidos, processoId);
+             
              // Listas para armazenar dados processados
              List<Map<String, Object>> dadosValidos = new ArrayList<>();
              List<Map<String, Object>> dadosInvalidos = new ArrayList<>();
@@ -423,6 +427,31 @@ public class FluxoPrincipalService {
          return texto.substring(inicio, fim).trim();
      }
      
+     /**
+      * Remove collection se ela existir
+      */
+     private void dropCollectionSeExistir(String collectionName, String processoId) {
+         ProcessLog log = new ProcessLog(processoId, "Verificando e removendo collection existente: " + collectionName, "DROP_COLLECTION");
+         processLogRepository.save(log);
+         
+         try {
+             if (flatMongoTemplate.collectionExists(collectionName)) {
+                 flatMongoTemplate.dropCollection(collectionName);
+                 log.setMensagem("Collection " + collectionName + " removida com sucesso");
+             } else {
+                 log.setMensagem("Collection " + collectionName + " não existe, nenhuma ação necessária");
+             }
+             log.finalizarEtapa();
+             processLogRepository.save(log);
+             
+         } catch (Exception e) {
+             log.finalizarEtapaComErro("Erro ao remover collection " + collectionName + ": " + e.getMessage());
+             processLogRepository.save(log);
+             logger.warn("Erro ao remover collection {}: {}", collectionName, e.getMessage());
+             // Não lançar exceção para não interromper o fluxo principal
+         }
+     }
+
      /**
       * Cria índice único composto na collection de dados válidos
       */

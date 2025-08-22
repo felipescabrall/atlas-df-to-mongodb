@@ -17,14 +17,12 @@ import org.springframework.data.mongodb.core.query.Query;
 import org.springframework.data.mongodb.core.query.Update;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
-import org.springframework.beans.factory.annotation.Value;
 import com.mongodb.client.model.IndexOptions;
 
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.*;
-import java.util.stream.Stream;
 
 @Service
 public class FluxoPrincipalService {
@@ -74,12 +72,6 @@ public class FluxoPrincipalService {
 
     @Value("${mongodb.atlas.cluster-name}")
     private String atlasClusterName;
-
-    @Value("${app.batch.size:1000}")
-    private int batchSize;
-
-    @Value("${app.bulk.insert.size:30000}")
-    private int bulkInsertSize;
 
     /**
      * Execução agendada do fluxo principal
@@ -445,35 +437,6 @@ public class FluxoPrincipalService {
      /**
       * Cria índice único composto na collection de dados válidos
       */
-     private void criarIndiceUnicoValidados(String collectionValidos, String processoId) {
-         ProcessLog log = new ProcessLog(processoId, "Criando índice único composto (cpf, num_cartao, corp) na collection: " + collectionValidos, "CRIACAO_INDICE_UNICO");
-         processLogRepository.save(log);
-         
-         try {
-              // Criar índice composto único com cpf:1, num_cartao:1, corp:1
-              Document indexKeys = new Document()
-                  .append("cpf", 1)
-                  .append("num_cartao", 1)
-                  .append("corp", 1);
-              
-              // Criar o índice na collection
-              flatMongoTemplate.getCollection(collectionValidos)
-                  .createIndex(indexKeys, new IndexOptions().unique(true));
-             
-             log.setMensagem("Índice único composto criado com sucesso na collection: " + collectionValidos + " com campos (cpf:1, num_cartao:1, corp:1)");
-             log.finalizarEtapa();
-             processLogRepository.save(log);
-             
-         } catch (Exception e) {
-             log.finalizarEtapaComErro("Erro ao criar índice único: " + e.getMessage());
-             processLogRepository.save(log);
-             logger.warn("Erro ao criar índice único na collection {}: {}", collectionValidos, e.getMessage());
-             // Não lançar exceção para não interromper o fluxo principal
-         }
-     }
-
-
-
      /**
       * Etapa 4: Limpeza e Finalização
       */
